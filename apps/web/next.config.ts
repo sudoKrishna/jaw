@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     agentFeedback: true,
   },
   cacheComponents: true,
+  transpilePackages: ["@repo/shared"],
   partialPrefetching: true,
   turbopack: {
     rules: {
