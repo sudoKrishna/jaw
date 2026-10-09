@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@repo/shared": "*",
+    "alea": "^1.0.1",
+    "simplex-noise": "^4.0.3",
     "ws": "^8.22.0"
   }
 }

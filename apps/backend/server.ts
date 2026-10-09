@@ -1,5 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
+import { getOrGenerateChunk } from "./terrain/chunkGenerator";
+
 
 
 
@@ -11,7 +13,8 @@ type Player = {
 
 type ClientMessage =
   | { type: "join" }
-  | { type: "move"; x: number; y: number };
+  | { type: "move"; x: number; y: number }
+  | {type : "chunk_request"; chunkX : number; chunkY : number};
 
 type ServerMessage = {
   type: "snapshot";
@@ -69,6 +72,22 @@ function parseClientMessage(data: Buffer): ClientMessage | null {
       type: "move",
       x: message.x,
       y: message.y,
+    };
+  }
+
+  if (
+    message.type === 'chunk_request' &&
+    'chunkX' in message &&
+    'chunkY' in message &&
+    typeof message.chunkX === 'number' &&
+    typeof message.chunkY === 'number' &&
+    Number.isInteger(message.chunkX) &&
+    Number.isInteger(message.chunkY)
+  ) {
+    return {
+      type : 'chunk_request',
+      chunkX : message.chunkX,
+      chunkY : message.chunkY,
     };
   }
 
@@ -161,7 +180,30 @@ wss.on("connection", (ws) => {
         currentPlayer.y = message.y;
         break;
       }
+
+      case 'chunk_request' : {
+        const MAX_CHUNK = 10_000;
+
+      if(
+        Math.abs(message.chunkX) > MAX_CHUNK || 
+        Math.abs(message.chunkY) > MAX_CHUNK
+      ) {
+        console.warn('Chunk request out of bounds:', currentPlayer.id);
+        return;
+      }
+
+      const chunk = getOrGenerateChunk(message.chunkX, message.chunkY);
+
+       ws.send(JSON.stringify({
+        type : 'chunk_response',
+        chunkX : message.chunkX,
+        chunkY : message.chunkY,
+        chunk,
+       }));
+       break;
+      }
     }
+    
   });
 
   ws.on("close", () => {
