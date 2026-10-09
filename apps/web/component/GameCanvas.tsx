@@ -2,16 +2,19 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { Chunk } from "@repo/shared";
+import {
+  updateChunks,
+  receiveChunk,
+  getAllLoadedChunks,
+} from "@/lib/chunkManager";
+import { drawChunks } from "@/lib/renderer";
 
 type Player = {
   id: string;
   x: number;
   y: number;
 };
-
-type ServerMessage =
-  | { type: "welcome"; playerId: string }
-  | { type: "snapshot"; players: Player[] };
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,6 +84,18 @@ export default function GameCanvas() {
       );
     };
 
+    // Ask the server for any chunks around the player that we don't have yet.
+    // updateChunks() de-duplicates, so it's safe to call every frame.
+    const requestChunks = () => {
+      if (socket?.readyState !== WebSocket.OPEN) return;
+
+      updateChunks(player.x, player.y, (chunkX, chunkY) => {
+        socket?.send(
+          JSON.stringify({ type: "chunk_request", chunkX, chunkY })
+        );
+      });
+    };
+
     const connect = () => {
       if (stopped) return;
 
@@ -135,6 +150,14 @@ export default function GameCanvas() {
                 typeof p.y === "number" &&
                 Number.isFinite(p.y)
             );
+            return;
+          }
+
+          if (
+            message.type === "chunk_response" &&
+            "chunk" in message
+          ) {
+            receiveChunk(message.chunk as Chunk);
           }
         } catch {
           console.error("Invalid server message");
@@ -227,6 +250,9 @@ export default function GameCanvas() {
         lastMoveSent = currentTime;
       }
 
+      // 4b. Request any missing chunks around the player
+      requestChunks();
+
       // 5. Smooth camera follow
       const targetX = player.x - canvas.width / 2;
       const targetY = player.y - canvas.height / 2;
@@ -239,39 +265,18 @@ export default function GameCanvas() {
       // 6. Clear screen
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 7. Draw world using camera coordinates
-      ctx.save();
-      ctx.translate(-camera.x, -camera.y);
-
-      const gridSize = 50;
-
-      const startX = Math.floor(camera.x / gridSize) * gridSize;
-      const startY = Math.floor(camera.y / gridSize) * gridSize;
-      const endX = camera.x + canvas.width + gridSize;
-      const endY = camera.y + canvas.height + gridSize;
-
-      ctx.beginPath();
-      ctx.strokeStyle = "#292929";
-      ctx.lineWidth = 1;
-
-      for (let x = startX; x <= endX; x += gridSize) {
-        ctx.moveTo(x, startY);
-        ctx.lineTo(x, endY);
-      }
-
-      for (let y = startY; y <= endY; y += gridSize) {
-        ctx.moveTo(startX, y);
-        ctx.lineTo(endX, y);
-      }
-
-      ctx.stroke();
+      // 7. Draw loaded chunks (camera applied inside drawChunks)
+      drawChunks(ctx, getAllLoadedChunks(), camera.x, camera.y);
 
       // 8. Draw other players
       for (const other of remotePlayers) {
         if (other.id === myPlayerId) continue;
 
+        const screenX = other.x - camera.x;
+        const screenY = other.y - camera.y;
+
         ctx.beginPath();
-        ctx.arc(other.x, other.y, 20, 0, Math.PI * 2);
+        ctx.arc(screenX, screenY, 20, 0, Math.PI * 2);
         ctx.fillStyle = "#38bdf8";
         ctx.fill();
 
@@ -280,18 +285,22 @@ export default function GameCanvas() {
         ctx.textAlign = "center";
         ctx.fillText(
           other.id.slice(0, 8),
-          other.x,
-          other.y - 28
+          screenX,
+          screenY - 28
         );
       }
 
       // 9. Draw local player
       ctx.beginPath();
-      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.arc(
+        player.x - camera.x,
+        player.y - camera.y,
+        player.radius,
+        0,
+        Math.PI * 2
+      );
       ctx.fillStyle = "#ffffff";
       ctx.fill();
-
-      ctx.restore();
 
       animationId = requestAnimationFrame(gameLoop);
     };
